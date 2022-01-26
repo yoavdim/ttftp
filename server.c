@@ -55,18 +55,20 @@ int is_octet(char const *data, int length) { // 0=good
     char const *ch;
     if(data[length-1] != '\0')
         return -1;
-    for(ch=data; ch != '\0'; ch++);
+    for(ch=data; *ch != '\0'; ch++);
     ch++;
     return strcmp(ch, "octet");
 }
 
 void build_ack(short int block_num, struct packet *result, int *sendMsgSize) {
+    LOG("ack %d\n", block_num);
     result->opcode = htons(OP_ACK);
     result->payload.ack.block_number = htons(block_num);
     *sendMsgSize = 4;
 }
 
 void build_err(short int error_code, char const* msg, struct packet *result, int *sendMsgSize) {
+    LOG("err %d %s\n", error_code, msg);
     result->opcode = htons(OP_ERR);
     result->payload.err.error_code = htons(error_code);
     strcpy(result->payload.err.msg, msg);
@@ -100,17 +102,20 @@ int main(int argc, char const *argv[]) {
         list_destroy(list);
         PEXIT();
     }
+    LOG("initialized\n");
     // config
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     server_addr.sin_port = htons(10069);// todo: htons(69);
+    LOG("configured\n");
     if (bind(sock, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
         PERR();
         list_destroy(list);
         close(sock);
         exit(1);
     }
+    LOG("binded\n");
 
     // run:
     for(;;) {
@@ -120,13 +125,16 @@ int main(int argc, char const *argv[]) {
             if ((recvMsgSize = recvfrom(sock, &packet, MAX_PACKET_LENGTH, 0, (struct sockaddr *) &client_addr, &client_addr_len)) < 0) {
                 PEXIT();
             }
+            LOG("recived\n");
             switch (ntohs(packet.opcode)) {
                 case OP_WRQ:
+                    LOG("WRQ\n");
                     if(is_octet(packet.payload.wrq.filename, recvMsgSize-2) != 0 || ! legal_name(packet.payload.wrq.filename)) {
                         // TODO: terminate ongoing related sessions? I dont think so, not from wrq
                         build_err(4, "Illegal WRQ", &result, &sendMsgSize);
                     } else {
                         status = list_add(list, client_addr, packet.payload.wrq.filename);
+                        LOG("status = %d\n", status);
                         if(status == 0) {
                             build_ack(0, &result, &sendMsgSize);
                         } else {
@@ -141,6 +149,7 @@ int main(int argc, char const *argv[]) {
                     break;
 
                 case OP_DATA:
+                    LOG("DATA\n");
                     session = list_get(list, client_addr);
                     if(!session) {
                         build_err(7, "Unknown user", &result, &sendMsgSize);
@@ -151,8 +160,9 @@ int main(int argc, char const *argv[]) {
                          session_add_data(session, packet.payload.data.data, recvMsgSize-4);
                          if(recvMsgSize-4 < 512) {
                              list_close(list, client_addr, 1);
-                             build_ack(ntohs(packet.payload.data.block_number), &result, &sendMsgSize);
+                             LOG("Saved\n");
                          }
+                         build_ack(ntohs(packet.payload.data.block_number), &result, &sendMsgSize);
                     }
                     break;
 

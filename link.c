@@ -50,13 +50,17 @@ int list_add(SessionList* list, struct sockaddr_in client_id, char const* filena
 int list_close(SessionList* list, struct sockaddr_in client_id, int save) {
     Node *node, *prev;
     node = list->_first;
+    prev = NULL;
     while(node) {
         if(addr_cmp(node->session.client_id, client_id)) {
             if(!save) {
                 if(remove(node->session.filename) != 0)
                     PEXIT();
             }
-            prev->next = node->next;
+            if(prev)
+                prev->next = node->next;
+            else
+                list->_first = node->next;
             free(node);
             return 0;
         }

@@ -11,9 +11,11 @@
 
 #define MAX_PACKET_LENGTH 1500
 
+// TODO: set to nothing before publishing
+#define LOG(...) fprintf(stderr, __VA_ARGS__)
 // only for syscall errors:
-#define PERR() do{  fprintf(stderr,"%d %s: ", __LINE__, __func__); perror("TTFTP_ERROR");} while(0)
-#define PEXIT() do{  fprintf(stderr,"%d %s: ", __LINE__, __func__); perror("TTFTP_ERROR"); exit(1);} while(0)
+#define PERR()  do{ LOG("%d %s: ", __LINE__, __func__); perror("TTFTP_ERROR");} while(0)
+#define PEXIT() do{ LOG("%d %s: ", __LINE__, __func__); perror("TTFTP_ERROR"); exit(1);} while(0)
 
 // maintain the state of each session
 typedef struct {
