@@ -5,8 +5,6 @@ SessionList* list_create(){
     return list;
 }
 
-#define list_foreach(temp_node) for(; temp_node; temp_node = temp_node->next)
-
 int checkIfFileExists(const char * filename) {
     FILE *file;
     if ((file = fopen(filename, "r"))) {
@@ -40,11 +38,19 @@ int list_add(SessionList* list, struct sockaddr_in client_id, char const* filena
     tmp->session.client_id = client_id;
     tmp->session.last_block_number = 0;
     tmp->session.num_of_fails = 0;
+    tmp->session.changed = time(NULL);
     strcpy(tmp->session.filename, filename);
     // add:
     tmp->next = list->_first;
     list->_first = tmp;
     return 0;
+}
+
+void session_close(Session *session, int save) {
+    if((!save) && session->last_block_number > 0) {
+        if(remove(session->filename) != 0)
+            PEXIT();
+    }
 }
 
 int list_close(SessionList* list, struct sockaddr_in client_id, int save) {
@@ -53,10 +59,7 @@ int list_close(SessionList* list, struct sockaddr_in client_id, int save) {
     prev = NULL;
     while(node) {
         if(addr_cmp(node->session.client_id, client_id)) {
-            if(!save) {
-                if(remove(node->session.filename) != 0)
-                    PEXIT();
-            }
+            session_close(&(node->session), save);
             if(prev)
                 prev->next = node->next;
             else
@@ -86,6 +89,7 @@ int session_add_data(Session* session, char const* buffer, int length) { // retu
     if(fwrite(buffer, sizeof(char), length, f) != length)
         PEXIT();
     fclose(f);
+    session->changed = time(NULL);
     return ++(session->last_block_number);
 }
 

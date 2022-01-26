@@ -42,7 +42,7 @@ struct packet {
 } __attribute__((packed));
 
 
-// -- handle functions: --
+// -- helper functions: --
 int legal_name(char const* name) {
     if(name[0] == '\0')
         return 0;
@@ -58,6 +58,20 @@ int is_octet(char const *data, int length) { // 0=good
     for(ch=data; *ch != '\0'; ch++);
     ch++;
     return strcmp(ch, "octet");
+}
+
+int do_select(int sock, int secs) {
+    struct timeval timeval = {secs, 0};
+    fd_set wr, rd, ex;
+    int res;
+    FD_ZERO(wr);
+    FD_ZERO(ex);
+    FD_ZERO(rd);
+    FD_SET(sock, rd);
+    res = select(sock+1, &rd, &wr, &ex, &timeval);
+    if((res < 0) && (errno != EINTR))
+        PEXIT();
+    return res > 0;
 }
 
 void build_ack(short int block_num, struct packet *result, int *sendMsgSize) {
@@ -78,8 +92,8 @@ void build_err(short int error_code, char const* msg, struct packet *result, int
 // -- main: --
 
 int main(int argc, char const *argv[]) {
-    //const int WAIT_FOR_PACKET_TIMEOUT = 3; // TODO from argv
-    //const int NUMBER_OF_FAILURES = 7;
+    const int WAIT_FOR_PACKET_TIMEOUT = 3; // TODO from argv
+    const int NUMBER_OF_FAILURES = 7;
 
     struct sockaddr_in server_addr;
     struct sockaddr_in client_addr; // dont bother with converting formats, unique anyway
@@ -89,9 +103,11 @@ int main(int argc, char const *argv[]) {
     int recvMsgSize;
     int sendMsgSize; // 4 for ack, dynamic for errors
     int sock;
+    time_t now;
 
     SessionList *list;
     Session *session;
+    Node *node, *prev; // for timeout execution
     int status;
     // init
     list = list_create();
@@ -121,7 +137,7 @@ int main(int argc, char const *argv[]) {
     for(;;) {
         client_addr_len = sizeof(client_addr); // reset address length
         // receive with timeout (else timeout all sessions):
-        if (1) { // TODO: check select timeout       ----
+        if (do_select(sock, 1) > 0) {
             if ((recvMsgSize = recvfrom(sock, &packet, MAX_PACKET_LENGTH, 0, (struct sockaddr *) &client_addr, &client_addr_len)) < 0) {
                 PEXIT();
             }
@@ -153,7 +169,7 @@ int main(int argc, char const *argv[]) {
                     session = list_get(list, client_addr);
                     if(!session) {
                         build_err(7, "Unknown user", &result, &sendMsgSize);
-                    } else if( ntohs(packet.payload.data.block_number) != (session->last_block_number +1) ) {
+                    } else if( ntohs(packet.payload.data.block_number) != (session->last_block_number +1) ) { // TODO: maybe allow same block_number and just ack without writing? - no need according to forum
                         build_err(0, "Bad block number", &result, &sendMsgSize); // ABORT!
                         list_close(list, client_addr, 0);
                     } else {
@@ -174,8 +190,39 @@ int main(int argc, char const *argv[]) {
             if (sendto(sock, &result, sendMsgSize, 0, (struct sockaddr *) &client_addr, sizeof(client_addr)) != sendMsgSize) {
                 PEXIT();
             }
-        } else { // not selected
-            // TODO: timeout all sessions
+        } // end of selected
+
+        // check timeout for every live session:
+        now = time(NULL);
+        node = list->_first;
+        prev = NULL;
+        while(node) {
+            session = &(node->session);
+            client_addr = session->client_id; // already in network form
+            //client_addr_len = sizeof(client_addr);
+
+            if(difftime(now, session->changed) < WAIT_FOR_PACKET_TIMEOUT) {
+                // timed out:
+                LOG("timed out: %s\n", session->filename);
+                session->num_of_fails++;
+                if(session->num_of_fails > NUMBER_OF_FAILURES) { // ugly implementation
+                    session_close(session, 0);
+                    if(prev)
+                        prev->next = node->next;
+                    else
+                        list->_first = node->next;
+                    free(node);
+                    node = prev ? prev : list->_first;
+                    build_err(0, "Abandoning file transmission", &result, &sendMsgSize);
+                } else {
+                    build_ack(session->last_block_number, &result, &sendMsgSize);
+                }
+                if (sendto(sock, &result, sendMsgSize, 0, (struct sockaddr *) &client_addr, sizeof(client_addr)) != sendMsgSize) {
+                    PEXIT();
+                }
+            }
+            prev = node;
+            node = node->next;
         }
     }
 
