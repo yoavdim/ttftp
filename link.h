@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -11,7 +12,8 @@
 #define MAX_PACKET_LENGTH 1500
 
 // only for syscall errors:
-#define PEXIT() do{ perror("TTFTP_ERROR"); exit(1);} while(0)
+#define PERR() do{  fprintf(stderr,"%d %s: ", __LINE__, __func__); perror("TTFTP_ERROR");} while(0)
+#define PEXIT() do{  fprintf(stderr,"%d %s: ", __LINE__, __func__); perror("TTFTP_ERROR"); exit(1);} while(0)
 
 // maintain the state of each session
 typedef struct {
@@ -37,4 +39,5 @@ int list_add(SessionList* list, struct sockaddr_in client_id, char const* filena
 int list_close(SessionList* list, struct sockaddr_in client_id, int save); // fail not exists
 Session* list_get(SessionList* list, struct sockaddr_in client_id);
 int session_add_data(Session* session, char const* buffer, int length);
+int addr_cmp(struct sockaddr_in a, struct sockaddr_in b);
 #endif

@@ -9,19 +9,23 @@ SessionList* list_create(){
 
 int checkIfFileExists(const char * filename) {
     FILE *file;
-    if (file = fopen(filename, "r")) {
+    if ((file = fopen(filename, "r"))) {
         fclose(file);
         return 1;
     }
     return 0;
 }
 
+int addr_cmp(struct sockaddr_in a, struct sockaddr_in b) { // since not packed
+    return (a.sin_family == b.sin_family) && (a.sin_port == b.sin_port) && (a.sin_addr.s_addr = b.sin_addr.s_addr);
+}
+
 int list_add(SessionList* list, struct sockaddr_in client_id, char const* filename) {
     Node *tmp = list->_first;
     list_foreach(tmp) {
-        if(tmp->session.client_id == client_id)
+        if(addr_cmp(tmp->session.client_id, client_id))
             return -1;
-        if(strcmp(tmp.session.filename, filename) == 0)
+        if(strcmp(tmp->session.filename, filename) == 0)
             return -2; // act as if the file already exists
     }
     // ^ not a live session
@@ -47,7 +51,7 @@ int list_close(SessionList* list, struct sockaddr_in client_id, int save) {
     Node *node, *prev;
     node = list->_first;
     while(node) {
-        if(node->session.client_id == client_id) {
+        if(addr_cmp(node->session.client_id, client_id)) {
             if(!save) {
                 if(remove(node->session.filename) != 0)
                     PEXIT();
@@ -65,7 +69,7 @@ int list_close(SessionList* list, struct sockaddr_in client_id, int save) {
 Session* list_get(SessionList* list, struct sockaddr_in client_id) {
     Node *tmp = list->_first;
     list_foreach(tmp) {
-        if(tmp->session.client_id == client_id)
+        if(addr_cmp(tmp->session.client_id, client_id))
             return &(tmp->session);
     }
     return NULL;
@@ -85,7 +89,7 @@ void node_destroy(Node *node) {
     if(!node)
         return;
     if(node->next)
-        node_destroy(node->next)
+        node_destroy(node->next);
     free(node);
 }
 

@@ -34,7 +34,7 @@ union payload {
     struct wrq_payload  wrq;
     struct ack_payload  ack;
     struct err_payload  err;
-}
+};
 
 struct packet {
     short int opcode; // dont forget converting
@@ -46,7 +46,7 @@ struct packet {
 int legal_name(char const* name) {
     if(name[0] == '\0')
         return 0;
-    for(char const* ch = name; ch++; ch[0] != '\0')
+    for(char const* ch = name; ch[0] != '\0'; ch++)
         if(ch[0] == '/')
             return 0;
     return 1;
@@ -68,16 +68,16 @@ void build_ack(short int block_num, struct packet *result, int *sendMsgSize) {
 
 void build_err(short int error_code, char const* msg, struct packet *result, int *sendMsgSize) {
     result->opcode = htons(OP_ERR);
-    result->payload.error_code = htons(error_code);
-    strcpy(result->payload.msg, msg);
+    result->payload.err.error_code = htons(error_code);
+    strcpy(result->payload.err.msg, msg);
     *sendMsgSize = htons(4 + strlen(msg) + 1);
 }
 
 // -- main: --
 
 int main(int argc, char const *argv[]) {
-    const int WAIT_FOR_PACKET_TIMEOUT = 3; // TODO from argv
-    const int NUMBER_OF_FAILURES = 7;
+    //const int WAIT_FOR_PACKET_TIMEOUT = 3; // TODO from argv
+    //const int NUMBER_OF_FAILURES = 7;
 
     struct sockaddr_in server_addr;
     struct sockaddr_in client_addr; // dont bother with converting formats, unique anyway
@@ -90,7 +90,7 @@ int main(int argc, char const *argv[]) {
 
     SessionList *list;
     Session *session;
-    int status, block_number;
+    int status;
     // init
     list = list_create();
     if(!list)
@@ -104,18 +104,19 @@ int main(int argc, char const *argv[]) {
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr.sin_port = htons(69);
+    server_addr.sin_port = htons(10069);// todo: htons(69);
     if (bind(sock, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
+        PERR();
         list_destroy(list);
         close(sock);
-        PEXIT();
+        exit(1);
     }
 
     // run:
     for(;;) {
-        client_addr_len = sizeoff(client_addr); // reset address length
+        client_addr_len = sizeof(client_addr); // reset address length
         // receive with timeout (else timeout all sessions):
-        if (TRUE) { // TODO: check select timeout       ----
+        if (1) { // TODO: check select timeout       ----
             if ((recvMsgSize = recvfrom(sock, &packet, MAX_PACKET_LENGTH, 0, (struct sockaddr *) &client_addr, &client_addr_len)) < 0) {
                 PEXIT();
             }
@@ -140,7 +141,7 @@ int main(int argc, char const *argv[]) {
                     break;
 
                 case OP_DATA:
-                    session = list_get(list, client_id);
+                    session = list_get(list, client_addr);
                     if(!session) {
                         build_err(7, "Unknown user", &result, &sendMsgSize);
                     } else if( ntohs(packet.payload.data.block_number) != (session->last_block_number +1) ) {
