@@ -60,18 +60,11 @@ int is_octet(char const *data, int length) { // 0=good
     return strcmp(ch, "octet");
 }
 
-int do_select(int sock, int secs) {
-    struct timeval timeval = {secs, 0};
-    fd_set wr, rd, ex;
-    int res;
-    FD_ZERO(wr);
-    FD_ZERO(ex);
-    FD_ZERO(rd);
-    FD_SET(sock, rd);
-    res = select(sock+1, &rd, &wr, &ex, &timeval);
-    if((res < 0) && (errno != EINTR))
+int do_select_pexit(int sock, int secs) {
+    int res = do_select(sock, secs);
+    if(res < 0)
         PEXIT();
-    return res > 0;
+    return res;
 }
 
 void build_ack(short int block_num, struct packet *result, int *sendMsgSize) {
@@ -92,8 +85,9 @@ void build_err(short int error_code, char const* msg, struct packet *result, int
 // -- main: --
 
 int main(int argc, char const *argv[]) {
-    const int WAIT_FOR_PACKET_TIMEOUT = 3; // TODO from argv
-    const int NUMBER_OF_FAILURES = 7;
+    int WAIT_FOR_PACKET_TIMEOUT; // TODO from argv
+    int NUMBER_OF_FAILURES;
+    short int SERVER_PORT;
 
     struct sockaddr_in server_addr;
     struct sockaddr_in client_addr; // dont bother with converting formats, unique anyway
@@ -109,6 +103,15 @@ int main(int argc, char const *argv[]) {
     Session *session;
     Node *node, *prev; // for timeout execution
     int status;
+
+    // input
+    if(argc != 4) {
+        printf("TTFTP_ERROR: illegal arguments\n");
+        exit(1);
+    }
+    SERVER_PORT = atoi(argv[1]);
+    WAIT_FOR_PACKET_TIMEOUT = atoi(argv[2]);
+    NUMBER_OF_FAILURES = atoi(argv[3]);
     // init
     list = list_create();
     if(!list)
@@ -123,7 +126,7 @@ int main(int argc, char const *argv[]) {
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr.sin_port = htons(10069);// todo: htons(69);
+    server_addr.sin_port = htons(SERVER_PORT);
     LOG("configured\n");
     if (bind(sock, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
         PERR();
@@ -137,7 +140,7 @@ int main(int argc, char const *argv[]) {
     for(;;) {
         client_addr_len = sizeof(client_addr); // reset address length
         // receive with timeout (else timeout all sessions):
-        if (do_select(sock, 1) > 0) {
+        if (do_select_pexit(sock, 1) > 0) {
             if ((recvMsgSize = recvfrom(sock, &packet, MAX_PACKET_LENGTH, 0, (struct sockaddr *) &client_addr, &client_addr_len)) < 0) {
                 PEXIT();
             }
@@ -192,20 +195,23 @@ int main(int argc, char const *argv[]) {
             }
         } // end of selected
 
-        // check timeout for every live session:
+        // -- check timeout for every live session: --
         now = time(NULL);
         node = list->_first;
         prev = NULL;
         while(node) {
+            status = 0;
             session = &(node->session);
             client_addr = session->client_id; // already in network form
             //client_addr_len = sizeof(client_addr);
 
-            if(difftime(now, session->changed) < WAIT_FOR_PACKET_TIMEOUT) {
+            if(difftime(now, session->changed) > WAIT_FOR_PACKET_TIMEOUT) {
                 // timed out:
                 LOG("timed out: %s\n", session->filename);
                 session->num_of_fails++;
                 if(session->num_of_fails > NUMBER_OF_FAILURES) { // ugly implementation
+                    LOG("terminate: %s\n", session->filename);
+                    status = -1;
                     session_close(session, 0);
                     if(prev)
                         prev->next = node->next;
@@ -220,10 +226,13 @@ int main(int argc, char const *argv[]) {
                 if (sendto(sock, &result, sendMsgSize, 0, (struct sockaddr *) &client_addr, sizeof(client_addr)) != sendMsgSize) {
                     PEXIT();
                 }
+                if(status<0) {
+                    // TODO: list_destroy(list); close(sock); exit(1); // ?
+                }
             }
             prev = node;
             node = node->next;
         }
-    }
+    } // end of infinite loop
 
 }

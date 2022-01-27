@@ -9,7 +9,7 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <time.h>
-#include <errno.h>
+#include "do_select.h"
 
 #define MAX_PACKET_LENGTH 1500
 

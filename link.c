@@ -96,6 +96,7 @@ int session_add_data(Session* session, char const* buffer, int length) { // retu
 void node_destroy(Node *node) {
     if(!node)
         return;
+    session_close(&(node->session), 0);
     if(node->next)
         node_destroy(node->next);
     free(node);
