@@ -82,12 +82,22 @@ Session* list_get(SessionList* list, struct sockaddr_in client_id) {
     return NULL;
 }
 
-int session_add_data(Session* session, char const* buffer, int length) { // return block_number
+int session_add_data(Session* session, char const* buffer, int length, int sock, SessionList *list) { // return block_number
+    // list & sock only for clean exit
     FILE* f = fopen(session->filename, "a");
-    if(!f)
-        PEXIT();
-    if(fwrite(buffer, sizeof(char), length, f) != length)
-        PEXIT();
+    if(!f) {
+        PERR();
+        list_destroy(list);
+        close(sock);
+        exit(1);
+    }
+    if(fwrite(buffer, sizeof(char), length, f) != length) {
+        PERR();
+        fclose(f);
+        list_destroy(list);
+        close(sock);
+        exit(1);
+    }
     fclose(f);
     session->changed = time(NULL);
     return ++(session->last_block_number);

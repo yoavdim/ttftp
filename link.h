@@ -13,11 +13,10 @@
 
 #define MAX_PACKET_LENGTH 1500
 
-// TODO: set to nothing before publishing
-#define LOG(...) fprintf(stderr, __VA_ARGS__)
+#define LOG(...) do { /*fprintf(stderr, __VA_ARGS__)*/ } while(0)
 // only for syscall errors:
-#define PERR()  do{ LOG("%d %s: ", __LINE__, __func__); perror("TTFTP_ERROR");} while(0)
-#define PEXIT() do{ PERR(); exit(1);} while(0)
+#define PERR()  do { LOG("%d %s: ", __LINE__, __func__); perror("TTFTP_ERROR"); } while(0)
+#define PEXIT() do { PERR(); exit(1); } while(0)
 
 // maintain the state of each session
 typedef struct {
@@ -45,7 +44,7 @@ void list_destroy(SessionList* list);
 int list_add(SessionList* list, struct sockaddr_in client_id, char const* filename); // fail on exists or file exists
 int list_close(SessionList* list, struct sockaddr_in client_id, int save); // fail not exists
 Session* list_get(SessionList* list, struct sockaddr_in client_id);
-int session_add_data(Session* session, char const* buffer, int length);
+int session_add_data(Session* session, char const* buffer, int length, int sock, SessionList *list);
 void session_close(Session *session, int save);
 int addr_cmp(struct sockaddr_in a, struct sockaddr_in b);
 #endif

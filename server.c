@@ -60,13 +60,6 @@ int is_octet(char const *data, int length) { // 0=good
     return strcmp(ch, "octet");
 }
 
-int do_select_pexit(int sock, int secs) {
-    int res = do_select(sock, secs);
-    if(res < 0)
-        PEXIT();
-    return res;
-}
-
 void build_ack(short int block_num, struct packet *result, int *sendMsgSize) {
     LOG("ack %d\n", block_num);
     result->opcode = htons(OP_ACK);
@@ -82,10 +75,24 @@ void build_err(short int error_code, char const* msg, struct packet *result, int
     *sendMsgSize = htons(4 + strlen(msg) + 1);
 }
 
+void pclean(int sock, SessionList *list) {
+    PERR();
+    list_destroy(list);
+    close(sock);
+    exit(1);
+}
+
+int do_select_pexit(int sock, int secs, SessionList *list) {
+    int res = do_select(sock, secs);
+    if(res < 0)
+        pclean(sock, list);
+    return res;
+}
+
 // -- main: --
 
 int main(int argc, char const *argv[]) {
-    int WAIT_FOR_PACKET_TIMEOUT; // TODO from argv
+    int WAIT_FOR_PACKET_TIMEOUT;
     int NUMBER_OF_FAILURES;
     short int SERVER_PORT;
 
@@ -129,10 +136,7 @@ int main(int argc, char const *argv[]) {
     server_addr.sin_port = htons(SERVER_PORT);
     LOG("configured\n");
     if (bind(sock, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
-        PERR();
-        list_destroy(list);
-        close(sock);
-        exit(1);
+        pclean(sock, list);
     }
     LOG("binded\n");
 
@@ -140,20 +144,19 @@ int main(int argc, char const *argv[]) {
     for(;;) {
         client_addr_len = sizeof(client_addr); // reset address length
         // receive with timeout (else timeout all sessions):
-        if (do_select_pexit(sock, 1) > 0) {
+        if (do_select_pexit(sock, 1, list) > 0) {
             if ((recvMsgSize = recvfrom(sock, &packet, MAX_PACKET_LENGTH, 0, (struct sockaddr *) &client_addr, &client_addr_len)) < 0) {
-                PEXIT();
+                pclean(sock, list);
             }
             LOG("recived\n");
             switch (ntohs(packet.opcode)) {
                 case OP_WRQ:
                     LOG("WRQ\n");
                     if(is_octet(packet.payload.wrq.filename, recvMsgSize-2) != 0 || ! legal_name(packet.payload.wrq.filename)) {
-                        // TODO: terminate ongoing related sessions? I dont think so, not from wrq
+                        // Q: terminate ongoing related sessions? I dont think so, not from wrq
                         build_err(4, "Illegal WRQ", &result, &sendMsgSize);
                     } else {
                         status = list_add(list, client_addr, packet.payload.wrq.filename);
-                        LOG("status = %d\n", status);
                         if(status == 0) {
                             build_ack(0, &result, &sendMsgSize);
                         } else {
@@ -162,7 +165,7 @@ int main(int argc, char const *argv[]) {
                             } else { // == -2
                                 build_err(6, "File already exists", &result, &sendMsgSize);
                             }
-                            // TODO: if session exists, abort? see above
+                            // Q: if session exists, abort? see above
                         }
                     }
                     break;
@@ -172,11 +175,11 @@ int main(int argc, char const *argv[]) {
                     session = list_get(list, client_addr);
                     if(!session) {
                         build_err(7, "Unknown user", &result, &sendMsgSize);
-                    } else if( ntohs(packet.payload.data.block_number) != (session->last_block_number +1) ) { // TODO: maybe allow same block_number and just ack without writing? - no need according to forum
-                        build_err(0, "Bad block number", &result, &sendMsgSize); // ABORT!
-                        list_close(list, client_addr, 0);
+                    } else if( ntohs(packet.payload.data.block_number) != (session->last_block_number +1) ) { // Q: maybe allow same block_number and just ack without writing? - no need according to forum
+                        build_err(0, "Bad block number", &result, &sendMsgSize);
+                        list_close(list, client_addr, 0);  // ABORT!
                     } else {
-                         session_add_data(session, packet.payload.data.data, recvMsgSize-4);
+                         session_add_data(session, packet.payload.data.data, recvMsgSize-4, sock, list);
                          if(recvMsgSize-4 < 512) {
                              list_close(list, client_addr, 1);
                              LOG("Saved\n");
@@ -191,7 +194,7 @@ int main(int argc, char const *argv[]) {
             } // end of switch-case
             // send result:
             if (sendto(sock, &result, sendMsgSize, 0, (struct sockaddr *) &client_addr, sizeof(client_addr)) != sendMsgSize) {
-                PEXIT();
+                pclean(sock, list);
             }
         } // end of selected
 
@@ -200,7 +203,6 @@ int main(int argc, char const *argv[]) {
         node = list->_first;
         prev = NULL;
         while(node) {
-            status = 0;
             session = &(node->session);
             client_addr = session->client_id; // already in network form
             //client_addr_len = sizeof(client_addr);
@@ -209,25 +211,23 @@ int main(int argc, char const *argv[]) {
                 // timed out:
                 LOG("timed out: %s\n", session->filename);
                 session->num_of_fails++;
-                if(session->num_of_fails > NUMBER_OF_FAILURES) { // ugly implementation
+                if(session->num_of_fails > NUMBER_OF_FAILURES) {
+                    // close session
                     LOG("terminate: %s\n", session->filename);
-                    status = -1;
                     session_close(session, 0);
+                    build_err(0, "Abandoning file transmission", &result, &sendMsgSize);
+                    // remove node without exiting the loop
                     if(prev)
                         prev->next = node->next;
                     else
                         list->_first = node->next;
                     free(node);
                     node = prev ? prev : list->_first;
-                    build_err(0, "Abandoning file transmission", &result, &sendMsgSize);
                 } else {
                     build_ack(session->last_block_number, &result, &sendMsgSize);
                 }
                 if (sendto(sock, &result, sendMsgSize, 0, (struct sockaddr *) &client_addr, sizeof(client_addr)) != sendMsgSize) {
-                    PEXIT();
-                }
-                if(status<0) {
-                    // TODO: list_destroy(list); close(sock); exit(1); // ?
+                    pclean(sock, list);
                 }
             }
             prev = node;
